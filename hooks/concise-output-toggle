@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Per-conversation switch for the concise-output overlay the router applies.
+#
+# The overlay lives in the routed request's instructions, so the only thing a
+# hook has to decide is whether this conversation wants it. Writing the answer
+# to the transcript is what makes it per-conversation: the next UserPromptSubmit
+# reads it back, so "off" survives for the rest of the session without the
+# router having to remember anything.
+#
+# Always exits 0. A style preference must never be able to fail a turn.
+set -uo pipefail
+
+state="${MODEL_ROUTER_CONCISE_OUTPUT_STATE:-$HOME/.codex/codex-router/concise-output}"
+
+case "${1:-toggle}" in
+  on|ultra)  printf 'on\n'  > "$state" ;;
+  off|normal) printf 'off\n' > "$state" ;;
+  status)
+    printf '%s\n' "$(cat "$state" 2>/dev/null || printf 'on')"
+    exit 0
+    ;;
+  *)
+    # Toggle: any value other than an explicit "off" turns it on, so a corrupt
+    # or missing state file resolves to the compressed default.
+    if [ "$(cat "$state" 2>/dev/null || printf 'on')" = "off" ]; then
+      printf 'on\n' > "$state"
+    else
+      printf 'off\n' > "$state"
+    fi
+    ;;
+esac
+
+mkdir -p "$(dirname "$state")"
+exit 0

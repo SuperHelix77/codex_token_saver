@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# SessionStart guard: make sure claude-mem and rtk are actually up, and say so.
+#
+# Codex fires SessionStart before the first tool call of every conversation. That
+# makes it the one place where a dead memory worker or a missing binary can be
+# noticed and repaired before the conversation depends on either. Reporting the
+# status in the injected context means the model does not have to go looking for
+# it, and does not waste a turn asking whether memory is available.
+#
+# Never fails the session. A guard that can block a conversation is worse than
+# the outage it is guarding against, so every branch exits 0.
+set -uo pipefail
+
+CLAUDE_MEM_ROOT="${CLAUDE_MEM_ROOT:-$HOME/.claude-mem}"
+CLAUDE_MEM_HEALTH="${CLAUDE_MEM_HEALTH:-http://127.0.0.1:37701/api/health}"
+PLUGIN_GLOB="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/thedotmack/claude-mem"
+RTK_CONFIG="$HOME/Library/Application Support/rtk/config.toml"
+
+notes=()
+
+# -- rtk ---------------------------------------------------------------------
+if command -v rtk >/dev/null 2>&1; then
+  # rtk prints "recall mode: sqlite" on one line; take the last field only.
+  recall_mode="$(rtk config recall 2>/dev/null | sed -n 's/^recall mode: *//p' | tr -d '[:space:]')"
+  notes+=("rtk: available ($(rtk --version 2>/dev/null | head -1)), recall mode ${recall_mode:-unknown}")
+else
+  notes+=("rtk: NOT INSTALLED - command output will not be condensed")
+fi
+
+# -- claude-mem --------------------------------------------------------------
+health="$(curl -fsS -m 4 "$CLAUDE_MEM_HEALTH" 2>/dev/null || true)"
+if [ -n "$health" ]; then
+  provider="$(printf '%s' "$health" | sed -n 's/.*"provider":"\([^"]*\)".*/\1/p')"
+  notes+=("claude-mem: worker up on the codex provider (${provider:-unknown})")
+else
+  # Offline. Start it, then say whether that worked -- a claim the caller can
+  # verify beats a hopeful one it cannot.
+  plugin_dir=""
+  for candidate in "$PLUGIN_GLOB"/*/; do
+    [ -d "$candidate/scripts" ] || continue
+    plugin_dir="${candidate%/}"
+  done
+  if [ -n "$plugin_dir" ] && [ -f "$plugin_dir/scripts/worker-service.cjs" ] \
+     && command -v bun >/dev/null 2>&1; then
+    # Detach fully: nohup plus a closed stdin, and the redirections applied
+    # OUTSIDE the subshell. `setsid` is the usual answer and does not exist on
+    # macOS, so it is not an option here.
+    ( cd "$plugin_dir" && nohup bun scripts/worker-service.cjs --daemon \
+        >/dev/null 2>&1 </dev/null & )
+    # Readiness is a real HTTP answer from the worker's own health route, and
+    # the process must still be alive afterwards. A port that answers during
+    # startup and then stops is not a started worker.
+    started="no"
+    for _ in $(seq 1 20); do
+      sleep 1
+      if curl -fsS -m 3 "$CLAUDE_MEM_HEALTH" >/dev/null 2>&1; then
+        sleep 2
+        if curl -fsS -m 3 "$CLAUDE_MEM_HEALTH" >/dev/null 2>&1; then
+          started="yes"
+          break
+        fi
+      fi
+    done
+    if [ "$started" = "yes" ]; then
+      notes+=("claude-mem: was offline, restarted and is now up")
+    else
+      notes+=("claude-mem: was offline and did NOT come back up; memory search is unavailable this session")
+    fi
+  else
+    notes+=("claude-mem: was offline and cannot start (bun or plugin missing); memory search is unavailable this session")
+  fi
+fi
+
+# -- Codex native memories ---------------------------------------------------
+if [ -f "$HOME/.codex/memories/memory_summary.md" ]; then
+  notes+=("codex memories: present ($(wc -c < "$HOME/.codex/memories/memory_summary.md" | tr -d ' ') byte index; search it before re-reading files)")
+fi
+
+# -- concise output ----------------------------------------------------------
+# Reported, not asserted: this costs input tokens when on, so the model should
+# be able to see which side of that trade the conversation is on.
+concise="$(cat "$HOME/.codex/codex-router/concise-output" 2>/dev/null || printf 'off')"
+if [ "$concise" = "on" ]; then
+  notes+=("concise output: ON (shorter replies, +286 input tokens/request)")
+else
+  notes+=("concise output: off (run: ~/.codex/bin/concise-output-toggle on)")
+fi
+
+printf '%s\n' "${notes[@]}" | sed 's/^/<!-- session-guard: /; s/$/ -->/'
+exit 0

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# rtk's Codex hook, with one fix.
+#
+# rtk 0.51.0 recognises Codex's permission modes
+# (default | acceptEdits | plan | dontAsk | bypassPermissions) and fails OPEN on
+# anything else -- including `never`, which codex 0.160 sends when
+# `approval_policy = "never"`. On this machine that is the mode every turn runs
+# in, so rtk was installed, registered, and never once fired.
+#
+# Fails open, always: a normalization failure must never block a tool call, so
+# the original payload is forwarded untouched and rtk decides as it always did.
+set -uo pipefail
+
+payload="$(cat 2>/dev/null || true)"
+[ -z "$payload" ] && exit 0
+
+normalized="$payload"
+if command -v python3 >/dev/null 2>&1; then
+  normalized="$(
+    printf '%s' "$payload" | python3 -c '
+import json, sys
+
+try:
+    event = json.load(sys.stdin)
+except Exception:
+    sys.stdout.write(""); raise SystemExit(0)
+
+# Only rewrite the field rtk gates on, and only to a value it already accepts.
+# `never` means Codex will not prompt for approval, which is the same approval
+# semantics rtk calls `dontAsk`.
+if event.get("permission_mode") == "never":
+    event["permission_mode"] = "dontAsk"
+
+sys.stdout.write(json.dumps(event))
+' 2>/dev/null || true
+  )"
+fi
+
+# An empty normalization result must not swallow the hook.
+if [ -z "$normalized" ]; then
+  printf '%s' "$payload" | rtk hook codex 2>/dev/null
+  exit 0
+fi
+
+printf '%s' "$normalized" | rtk hook codex 2>/dev/null
+exit 0
