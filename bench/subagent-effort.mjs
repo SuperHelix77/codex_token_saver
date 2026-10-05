@@ -1,8 +1,19 @@
 // Full A/B: identical work, with and without the token_saver stack.
+//
+//   ROUTER_URL     default http://127.0.0.1:4202/v1/responses
+//   ROUTER_SECRET  default $CODEX_HOME/codex-router/caller-secret
+//
+// The secret is the local router's shared credential, read only so the
+// benchmark can send a real request and read real prompt tokens. Nothing in
+// this repository transmits it anywhere.
 import { readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const KEY = readFileSync(`${process.env.HOME}/.codex/codex-router/caller-secret`, "utf8").trim();
-const ROUTER = "http://127.0.0.1:4202/v1/responses";
+const SECRET_PATH = process.env.ROUTER_SECRET
+  || path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "codex-router", "caller-secret");
+const KEY = readFileSync(SECRET_PATH, "utf8").trim();
+const ROUTER = process.env.ROUTER_URL || "http://127.0.0.1:4202/v1/responses";
 const MODELS = ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"];
 const REQUESTS_PER_TURN = 40;
 

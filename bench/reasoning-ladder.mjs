@@ -1,7 +1,14 @@
 // Reasoning effort is a multiplier on thinking tokens, and thinking tokens are
 // billed as output. Measure it rather than assume the ratio.
+// Portable credential/router resolution. See bench/tool-tax.mjs for env vars.
 import { readFileSync } from "node:fs";
-const KEY = readFileSync(process.env.HOME + "/.codex/codex-router/caller-secret", "utf8").trim();
+import os from "node:os";
+import path from "node:path";
+
+const SECRET_PATH = process.env.ROUTER_SECRET
+  || path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "codex-router", "caller-secret");
+const KEY = readFileSync(SECRET_PATH, "utf8").trim();
+const ROUTER = process.env.ROUTER_URL || "http://127.0.0.1:4202/v1/responses";
 
 async function run(model, effort, prompt) {
   const body = { model, stream: true, max_output_tokens: 900,

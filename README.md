@@ -51,9 +51,10 @@ Identical prompt, one sample per point, via `/v1/responses`:
 | 10 | 615 | 60.6 |
 | 20 | 1205 | 59.8 |
 
-Confirmed across all three models. `gpt-6-luna`, `gpt-6.1-sol` and
-`gpt-6-astra` all reported 13 bare / 1229 with twenty tools. **1,216 input
-tokens per request**, so about 48,600 over a 40-request turn.
+Confirmed on all three models. `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6-astra`
+each reported 13 bare / 1229 with twenty tools, and a repeat run gave the same
+166-token delta at two tools. **1,216 input tokens per request**, so about
+48,600 over a 40-request turn.
 
 ### Reasoning effort is billed as output
 
@@ -61,9 +62,13 @@ Same prompt, one sample each:
 
 | model | medium | max |
 |---|---|---|
-| gpt-6-luna | 19 | 57 |
-| gpt-6.1-sol | 0 | 39 |
+| gpt-6-luna | 19-22 | 50-57 |
+| gpt-6.1-sol | 0 | 34-39 |
 | gpt-6-astra | 0 | 34 |
+
+Ranges are two independent samples of the same prompt. Reasoning tokens move
+with the path a model takes through a problem, so the ratio is the stable part
+and the absolute count is not.
 
 On a delegated subagent task, `max` to `medium` saved **160 / 1,560 / 1,720**
 reasoning tokens per turn of 40 requests. That is why
@@ -77,6 +82,23 @@ escalation.
 
 Condensed output is not lost output: every filter prints a recovery hash
 (`rtk recall <hash>`), and `recall mode: sqlite` keeps the full text.
+
+## What this does not fix
+
+The tool-schema tax is the largest single item and it is **not** fully
+removable from the router:
+
+- `tools.omit_tools_from` in `config.toml` is feature-gated off, so Codex sends
+  the full inventory regardless of what config asks for.
+- The router can drop a schema whose MCP server never connected, but only with
+  a live connection registry. That registry does not exist in this process, and
+  guessing at one would drop tools that are in fact available -- which costs a
+  whole turn to save ~60 tokens.
+
+So the shipped prune is limited to compaction requests, where no new tool call
+can be made and the whole set is pure waste. Everything else in this repository
+attacks cost that is actually removable: repeated tool *output*, injected
+instruction text, and reasoning effort spent on work that did not need it.
 
 ## Two silent failures worth knowing about
 
